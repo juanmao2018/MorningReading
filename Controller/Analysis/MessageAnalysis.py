@@ -6,10 +6,12 @@ from sqlalchemy.orm import aliased
 from sqlalchemy import text, case, outerjoin, func
 import pandas as pd
 import numpy as np
-import datetime
+import datetime, time
 from decimal import *
+from multiprocessing.dummy import Pool as ThreadPool
 
 from Utils.Figure import Figure
+from Controller.DBController import DB_ScopedSession
 from Model.MessageModel import MessageModel
 Message = aliased(MessageModel, name='Message')
 
@@ -17,35 +19,38 @@ Message = aliased(MessageModel, name='Message')
 class CollectionAnalysis(object):
     """总体分析"""
 
-    def __init__(self, DBCtrl):
-        self.DBCtrl = DBCtrl
-        self.userList = [] # 用户号和用户名列表
+    def __init__(self):
+        self.userLst = [] # 用户号和用户名列表
         self.userNum_wordLen_everyday = [] # 每天的打卡的用户数和字数
         self.dayNum_wordLen_rank = [] # 每个用户的打卡天数、字数、排名
         self.descrip = ''
+        self.psnAnlsLst = [] # 个体分析的结果列表
 
 
-    def query_userList(self):
+    def query_userLst(self):
         """查询参与打卡的用户号和昵称"""
         #   （存在一个用户有多个用户名的情况，用max()和group_by()筛选一个用户名）
+        dbSession = DB_ScopedSession()
         rows = None
         try:
-            rows = self.DBCtrl.dbSession.query(Message.useruid, func.max(Message.useruname)).\
+            rows = dbSession.query(Message.useruid, func.max(Message.useruname)).\
                 group_by(Message.useruid).all()
             rows = pd.DataFrame(rows, index=range(1,len(rows)+1), 
                 columns=['useruid', 'useruname'])
-            self.userList = rows
+            self.userLst = rows
         except Exception as e:
             print('!Error: 没有查询到信息')
             raise e
+        dbSession.close()
         return rows
 
 
     def query_userNum_wordLen_everyday(self):
         """查询每天的打卡人数和字数（一个人一天多次打卡仅统计一次）"""
+        dbSession = DB_ScopedSession()
         rows = None
         try:
-            rows = self.DBCtrl.dbSession.query(Message.msgdate, 
+            rows = dbSession.query(Message.msgdate, 
                 func.count(Message.useruid.distinct()).label('userNum'), 
                 func.sum(Message.contentLen).label('wordLen')).group_by(Message.msgdate).all()
             rows = pd.DataFrame(rows, index=range(1,len(rows)+1), 
@@ -55,18 +60,20 @@ class CollectionAnalysis(object):
         except Exception as e:
             print('!Error: 没有查询到信息')
             raise e
+        dbSession.close()
         return rows
 
 
     def query_dayNum_wordLen_rank(self):
         """查询每个用户的打卡天数、字数，并排名（按照天数、字数降序排列，一天多次打卡算一次）"""
+        dbSession = DB_ScopedSession()
         rows = None
         try:
-            stmt = self.DBCtrl.dbSession.query(Message.useruid, func.count(Message.msgdate.\
+            stmt = dbSession.query(Message.useruid, func.count(Message.msgdate.\
                 distinct()).label('dateNum')).group_by(Message.useruid).subquery()
-            stmt2 = self.DBCtrl.dbSession.query(Message.useruid, func.sum(Message.contentLen).\
+            stmt2 = dbSession.query(Message.useruid, func.sum(Message.contentLen).\
                 label('wordLen')).group_by(Message.useruid).subquery()
-            rows = self.DBCtrl.dbSession.query(stmt.c.useruid, stmt.c.dateNum, 
+            rows = dbSession.query(stmt.c.useruid, stmt.c.dateNum, 
                 stmt2.c.wordLen).filter(stmt.c.useruid==stmt2.c.useruid).\
                 order_by(stmt.c.dateNum.desc(), stmt2.c.wordLen.desc()).all()
             rows = pd.DataFrame(rows, index=range(1,len(rows)+1), 
@@ -76,6 +83,7 @@ class CollectionAnalysis(object):
         except Exception as e:
             print('!Error: 没有查询到信息')
             raise e
+        dbSession.close()
         return rows
 
 
@@ -103,7 +111,30 @@ class CollectionAnalysis(object):
         descrip += '\n每天打卡的人数及输出的文字数量如下图：'
         self.descrip = descrip
         return descrip
-        
+
+
+    def get_psnAnlsLst(self, targetUserLst=[]):
+        """查询目标列表中的个体分析结果"""
+        psnAnlsLst = []
+        thrdPool = ThreadPool()
+        if len(targetUserLst) == 0:
+            targetUserLst = self.userLst['useruid']
+        psnAnlsLst = list(thrdPool.map(self.get_psnAnls, targetUserLst))
+        thrdPool.close() 
+        thrdPool.join() 
+        self.psnAnlsLst = psnAnlsLst
+        return psnAnlsLst
+
+
+    def get_psnAnls(self, targetUseruid):
+        """查询个体分析结果"""
+        # print("Starting PersonAnalysis " + targetUseruid + " " + time.ctime())
+        PsnAnls = PersonAnalysis(targetUseruid, self.get_rank_by_useruid(targetUseruid))
+        rows = PsnAnls.query_name_by_useruid()
+        rows = PsnAnls.query_wordLen_checkFlag_everyday()
+        PsnAnls.get_description()
+        return PsnAnls
+         
 
     def __repr__(self):
         return "<%s(descrip=%s)>" % (self.__class__.__name__, self.descrip)
@@ -112,34 +143,36 @@ class CollectionAnalysis(object):
 
 class PersonAnalysis(object):
     """个人分析"""
-    def __init__(self, DBCtrl, useruid, rank):
-      self.DBCtrl = DBCtrl
-      self.useruid = useruid
-      self.rank = rank
-      self.useruname = ''
-      self.wordLen_checkFlag_everyday = []
-      self.descrip = ''
+    def __init__(self, useruid, rank):
+        self.useruid = useruid
+        self.rank = rank
+        self.useruname = ''
+        self.wordLen_checkFlag_everyday = []
+        self.descrip = ''
 
 
     def query_name_by_useruid(self):
         """查找指定用户号的用户名"""
+        dbSession = DB_ScopedSession()
         rows = []
         try: # （存在一个用户由多个用户名的情况，用max()和group_by()删选一个）
-            rows = self.DBCtrl.dbSession.query(Message.useruid, func.max(Message.useruname)).\
+            rows = dbSession.query(Message.useruid, func.max(Message.useruname)).\
             filter(text("useruid=:useruid")).params(useruid=self.useruid).all()
             self.useruname = rows[0][1]
         except Exception as e:
             print('!Error: 没有该用户的信息')
             raise e
+        dbSession.close()
         return rows
 
 
     def query_wordLen_checkFlag_everyday(self):
         """查询指定用户号的每天的打卡字数和打卡标志"""
+        dbSession = DB_ScopedSession()
         rows = None
         try:
-            stmt = self.DBCtrl.dbSession.query(Message.msgdate.distinct().label('msgdate')).subquery()
-            stmt2 = self.DBCtrl.dbSession.query(Message).filter(Message.useruid==self.useruid).subquery()
+            stmt = dbSession.query(Message.msgdate.distinct().label('msgdate')).subquery()
+            stmt2 = dbSession.query(Message).filter(Message.useruid==self.useruid).subquery()
             caseStmt = case(
                 [(func.sum(stmt2.c.contentLen) > 0, func.sum(stmt2.c.contentLen)),], 
                 else_ = 0
@@ -147,7 +180,7 @@ class PersonAnalysis(object):
             caseStmt2 = case(
                 [(stmt2.c.msgdate, 1),], else_ = 0
             ).label('checkFlag')
-            rows = self.DBCtrl.dbSession.query(stmt.c.msgdate, caseStmt, caseStmt2).\
+            rows = dbSession.query(stmt.c.msgdate, caseStmt, caseStmt2).\
                 outerjoin(stmt2, stmt.c.msgdate==stmt2.c.msgdate).group_by(stmt.c.msgdate).\
                 order_by(stmt.c.msgdate).all()
             rows = pd.DataFrame(rows, columns=['date', 'wordLen', 'checkFlag'])
@@ -157,6 +190,7 @@ class PersonAnalysis(object):
         except Exception as e:
             print('!Error: 没有该用户的信息')
             raise e
+        dbSession.close()
         return rows
 
 

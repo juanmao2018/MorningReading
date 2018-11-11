@@ -4,8 +4,6 @@
 
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy import Column, String, Date, Time, Text, Integer
-# import sys
-# sys.path.append(r"C:\Users\Desktop\MyCode\")
 
 Base = declarative_base()  # create the base class
 
