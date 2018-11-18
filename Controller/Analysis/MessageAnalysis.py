@@ -6,9 +6,8 @@ from sqlalchemy.orm import aliased
 from sqlalchemy import text, case, outerjoin, func
 import pandas as pd
 import numpy as np
-import datetime, time
 from decimal import *
-from multiprocessing.dummy import Pool as ThreadPool
+import datetime, threading
 
 from Utils.Figure import Figure
 from Controller.DBController import DB_ScopedSession
@@ -116,24 +115,31 @@ class CollectionAnalysis(object):
     def get_psnAnlsLst(self, targetUserLst=[]):
         """查询目标列表中的个体分析结果"""
         psnAnlsLst = []
-        thrdPool = ThreadPool()
         if len(targetUserLst) == 0:
             targetUserLst = self.userLst['useruid']
-        psnAnlsLst = list(thrdPool.map(self.get_psnAnls, targetUserLst))
-        thrdPool.close() 
-        thrdPool.join() 
+        # 定义线程池并创建线程对象
+        threads = [threading.Thread(target=self.get_psnAnls, args=(item, psnAnlsLst)) for item in targetUserLst] # 创建线程
+        for thrd in threads: # 启动所有线程
+            thrd.start()
+        for thrd in threads: # 等待线程运行完毕
+            thrd.join() 
         self.psnAnlsLst = psnAnlsLst
         return psnAnlsLst
 
 
-    def get_psnAnls(self, targetUseruid):
+    def get_psnAnls(self, targetUseruid, psnAnlsLst):
         """查询个体分析结果"""
-        # print("Starting PersonAnalysis " + targetUseruid + " " + time.ctime())
-        PsnAnls = PersonAnalysis(targetUseruid, self.get_rank_by_useruid(targetUseruid))
-        rows = PsnAnls.query_name_by_useruid()
-        rows = PsnAnls.query_wordLen_checkFlag_everyday()
-        PsnAnls.get_description()
-        return PsnAnls
+        with Figure.ThreadInfo['threadMaxnum']:
+            # print("thread-%s is running %s" % (threading.current_thread().name, datetime.datetime.now()))
+            PsnAnls = PersonAnalysis(targetUseruid, self.get_rank_by_useruid(targetUseruid))
+            rows = PsnAnls.query_name_by_useruid()
+            rows = PsnAnls.query_wordLen_checkFlag_everyday()
+            PsnAnls.get_description()
+            Figure.ThreadInfo['mutex'].acquire() # 取得锁
+            psnAnlsLst.append(PsnAnls) 
+            Figure.ThreadInfo['mutex'].release() # 释放锁
+            # print("thread-%s ended %s" % (threading.current_thread().name, datetime.datetime.now()))
+            return 1
          
 
     def __repr__(self):

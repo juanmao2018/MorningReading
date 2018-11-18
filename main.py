@@ -7,7 +7,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 
-# myfont = matplotlib.font_manager.FontProperties(fname=r'C:/Windows/Fonts/SimHei.ttf') 
+# myfont = matplotlib.font_manager.FontProperties(fname=r'C:/Windows/Fonts/SimHei.ttf')
 plt.rcParams['font.sans-serif']=['SimHei'] # 用来正常显示中文标签
 plt.rcParams['axes.unicode_minus'] = False #用来正常显示负号
 
@@ -23,8 +23,8 @@ from View.SaveMessageAnalysis import SaveMessageAnalysis
 
 def main():
     DBOprt = DBOperator()
-    
-    # -- 建表模型
+
+    # # -- 建表模型
     # DBOprt.init_db()
 
     # # --消息入库
@@ -36,7 +36,7 @@ def main():
     #     StoreMsg.store_message(msgLst)
     #     print(len(msgLst))
 
-    
+
     # -- 集合分析（包含个体分析）
     ClctAnls = CollectionAnalysis()
     rows = ClctAnls.query_userLst()
@@ -53,4 +53,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()   
+    main()

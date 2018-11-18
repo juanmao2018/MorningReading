@@ -2,6 +2,8 @@
 # -*- coding: UTF-8 -*-
 # 2018-10-28
 
+import threading
+
 class Figure(object):
     """记录指标、要求的类"""
     # -- 数据库配置信息
@@ -25,9 +27,13 @@ class Figure(object):
     }
 
     pathInfo = {
-        'inputPath': "sample\\",
+        'inputPath': "inputs\\",
         'outputPath': "outputs\\"
     }
-    
+
     fileName = '统计结果'
 
+    ThreadInfo = {
+        'mutex': threading.Lock(), # 创建线程锁
+        'threadMaxnum': threading.Semaphore(8)  # 限制线程的最大数量
+    }

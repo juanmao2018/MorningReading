@@ -5,6 +5,7 @@
 import pandas as pd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+plt.switch_backend('agg') 
 import time
 import multiprocessing
 # myfont = matplotlib.font_manager.FontProperties(fname=r'C:/Windows/Fonts/SimHei.ttf') 
